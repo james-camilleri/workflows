@@ -4,9 +4,16 @@
   "description": "Shared Github workflows",
   "main": "index.js",
   "scripts": {
+    "prepublishOnly": "pnpm build",
+    "build": "pnpm --filter=!. build",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "devDependencies": {
+    "@james-camilleri/config": "^1.1.0",
+    "prettier": "^3.3.2"
+  },
+  "prettier": "@james-camilleri/config/prettier"
 }
