@@ -1,0 +1,14 @@
+name: Check Checkbox
+description: Check if a GitHub comment checkbox has been ticked.
+inputs:
+    checkbox-text:
+        description: The label used to identify the checkbox.
+        required: true
+
+outputs:
+    checked:
+        description: Whether the checkbox is checked.
+
+runs:
+    using: node20
+    main: dist/index.cjs

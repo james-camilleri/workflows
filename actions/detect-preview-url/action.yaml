@@ -1,0 +1,23 @@
+name: Detect Preview URL
+description: Detects the preview URL for the given site from a cloud hosting provider.
+
+inputs:
+    repo-token:
+        description: GitHub token for API access.
+        default: ${{ github.token }}
+        required: true
+    pull-request:
+        description: The pull request to update. Defaults to the current PR.
+        default: ${{ github.event.number || github.event.issue.number }}
+        required: true
+    site-name:
+        description: The site to obtain the URL for, as configured on the cloud provider.
+        required: true
+
+outputs:
+    url:
+        description: The publicly-accessible preview URL.
+
+runs:
+    using: node20
+    main: dist/index.cjs
