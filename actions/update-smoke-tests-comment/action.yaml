@@ -1,0 +1,23 @@
+name: Update Smoke Test Comment
+description: Adds/updates a PR comment if smoke tests have failed, with a checkbox for regenerating them if necessary.
+
+inputs:
+    repo-token:
+        description: GitHub token for API access.
+        default: ${{ github.token }}
+        required: true
+    pull-request:
+        description: The pull request to update. Defaults to the current PR.
+        default: ${{ github.event.number || github.event.issue.number }}
+        required: true
+    comment-type:
+        description: "The type of comment to post/update: 'tests-passed', 'tests-failed' or 'screenshots-updated'."
+        required: true
+    artifact-url:
+        description: The test result artifact to link to in the case of failed tests.
+    commit-sha:
+        description: The commit SHA for newly-generated baseline screenshots.
+
+runs:
+    using: node20
+    main: dist/index.cjs

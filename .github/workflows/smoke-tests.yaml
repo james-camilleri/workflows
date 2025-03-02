@@ -1,0 +1,170 @@
+name: Smoke Tests
+description: Crawl a preview URL on a cloud provider and run visual regression tests against it using Playwright.
+
+on:
+  workflow_call:
+    inputs:
+      site-name:
+        description: The site name, as configured on the cloud provider.
+        type: string
+        required: true
+      prod-url:
+        description: The prod URL, used for running tests on the main branch.
+        type: string
+        required: true
+      working-directory:
+        description: The subdirectory (in a monorepo) being tested. Defaults to the root directory.
+        type: string
+      screenshot-directory:
+        description: The directory to store test screenshots in. Defaults to `{working-directory}/.smoke-tests`.
+        type: string
+      test-styles:
+        description: Any custom CSS to be injected when running tests. Defaults to `{working-directory}/tests/setup/styles.css`.
+        type: string
+      reduced-run:
+        description: Whether to run smoke tests on all browsers/platforms or a reduced subset.
+        type: boolean
+
+jobs:
+  smoke-tests:
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if screenshots should be regenerated
+        id: regenerate-screenshots
+        if: github.event_name == 'issue_comment'
+        uses: james-camilleri/workflows/actions/check-checkbox@main
+        with:
+          checkbox-text: '📸 Regenerate screenshots'
+
+      # Get the branch for the comment's pull request, because it's not on the "issue_comment" event.
+      - name: Get branch
+        id: get-branch
+        if: github.event_name == 'issue_comment' && steps.regenerate-screenshots.outputs.checked
+        uses: actions/github-script@v7
+        with:
+          result-encoding: string
+          script: |
+            const pr = await github.rest.pulls.get({
+              pull_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            })
+
+            return pr.data.head.ref
+
+      - name: Checkout smoke tests
+        if: github.event_name != 'issue_comment' || steps.regenerate-screenshots.outputs.checked
+        uses: actions/checkout@v4
+        with:
+          repository: james-camilleri/workflows
+          sparse-checkout: smoke-tests
+          sparse-checkout-cone-mode: false
+
+      - name: Move smoke tests to root
+        if: github.event_name != 'issue_comment' || steps.regenerate-screenshots.outputs.checked
+        run: |
+          mv smoke-tests/* .
+          rm -rf smoke-tests
+
+      - name: Checkout current repository
+        if: github.event_name != 'issue_comment' || steps.regenerate-screenshots.outputs.checked
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'issue_comment' && steps.get-branch.outputs.result || github.ref }}
+          path: .test-repository
+
+      - name: Install pnpm
+        if: github.event_name != 'issue_comment' || steps.regenerate-screenshots.outputs.checked
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        if: github.event_name != 'issue_comment' || steps.regenerate-screenshots.outputs.checked
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          # Currently not working because the lockfile is at the monorepo level.
+          # cache: 'pnpm'
+
+      - name: Extract preview URL
+        id: preview-url
+        # Don't wait for deploy preview when running on main
+        if: github.ref != 'refs/heads/main' || github.event_name != 'issue_comment' || steps.regenerate-screenshots.outputs.checked
+        uses: james-camilleri/workflows/actions/detect-preview-url@main
+        with:
+          site-name: ${{ inputs.site-name }}
+
+      - name: Install dependencies
+        if: github.event_name != 'issue_comment' || steps.regenerate-screenshots.outputs.checked
+        run: pnpm install
+
+      - name: Install Playwright browsers
+        if: github.event_name != 'issue_comment' || steps.regenerate-screenshots.outputs.checked
+        run: pnpm exec playwright install --with-deps ${{ inputs.reduced-run && 'chromium' || '' }}
+
+      - name: Crawl website
+        if: github.event_name != 'issue_comment' || steps.regenerate-screenshots.outputs.checked
+        run: pnpm exec playwright test --project="Crawler" --retries 0
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ steps.preview-url.outputs.url || inputs.prod-url }}
+          TEST_REPOSITORY_DIR: ${{ inputs.working-directory }}
+          SCREENSHOT_DIRECTORY: ${{ inputs.screenshot-directory }}
+          TEST_STYLES_PATH: ${{ inputs.test-styles }}
+
+      - name: Update snapshots
+        if: steps.regenerate-screenshots.outputs.checked
+        run: pnpm exec playwright test smoke-tests ${{ inputs.reduced-run && '--project="Desktop Chrome" "Mobile Chrome"' || '' }} --update-snapshots
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ steps.preview-url.outputs.url || inputs.prod-url }}
+          TEST_REPOSITORY_DIR: ${{ inputs.working-directory }}
+          SCREENSHOT_DIRECTORY: ${{ inputs.screenshot-directory }}
+          TEST_STYLES_PATH: ${{ inputs.test-styles }}
+
+      - name: Commit updated snapshots
+        if: steps.regenerate-screenshots.outputs.checked
+        run: pnpm exec playwright test smoke-tests ${{ inputs.reduced-run && '--project="Desktop Chrome" "Mobile Chrome"' || '' }} --update-snapshots
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ steps.preview-url.outputs.url || inputs.prod-url }}
+          TEST_REPOSITORY_DIR: ${{ inputs.working-directory }}
+          SCREENSHOT_DIRECTORY: ${{ inputs.screenshot-directory }}
+          TEST_STYLES_PATH: ${{ inputs.test-styles }}
+
+      - name: Commit changes
+        if: steps.regenerate-screenshots.outputs.checked
+        run: |
+          git add ${{ inputs.screenshot-directory }}/**
+          git commit -am "[CI] Update screenshots"
+
+      # Split this into a second step so the action fails if there's nothing to commit.
+      - name: Push changes
+        id: commit
+        if: steps.regenerate-screenshots.outputs.checked
+        run: |
+          git push
+          echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Run smoke tests
+        run: pnpm exec playwright test smoke-tests ${{ inputs.reduced-run && '--project="Desktop Chrome" "Mobile Chrome"' || '' }}
+        if: github.event_name != 'issue_comment'
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ steps.preview-url.outputs.url || inputs.prod-url }}
+          TEST_REPOSITORY_DIR: ${{ inputs.working-directory }}
+          SCREENSHOT_DIRECTORY: ${{ inputs.screenshot-directory }}
+          TEST_STYLES_PATH: ${{ inputs.test-styles }}
+
+      - name: Upload test report
+        id: artifact-upload
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 30
+
+      - name: Update status comment
+        if: (success() || failure()) && (github.event_name != 'issue_comment' || steps.regenerate-screenshots.outputs.checked) && contains(github.ref, 'master') != true
+        uses: james-camilleri/workflows/actions/update-smoke-tests-comment@main
+        with:
+          artifact-url: ${{ steps.artifact-upload.outputs.artifact-url }}
+          comment-type: ${{ job.status == 'success' && (steps.regenerate-screenshots.outputs.checked && 'screenshots-updated' || 'tests-passed') || 'tests-failed' }}
+          commit-sha: ${{ steps.commit.outputs.sha }}
