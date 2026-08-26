@@ -1,0 +1,28 @@
+name: Lint
+description: Run formatting, lint, and type checks on the current repository.
+
+on:
+  workflow_call:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout current repository
+        uses: actions/checkout@v7
+
+      - name: Install Node, pnpm, and dependencies
+        uses: pnpm/setup@v2
+        with:
+          cache: true
+
+      # Build step must be carried out before linting and type-checking
+      # to ensure all dependency typescript definitions exist before checks.
+      - name: Build
+        run: pnpm build
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm check
